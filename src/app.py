@@ -1,20 +1,21 @@
 import pandas as pd
 import json
 from dhanhq import dhanhq
+from dhanhq import marketfeed
 import requests
 from datetime import datetime, timedelta
 import schedule
 import time
 
-client_id = 1000596547
-access_token = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9.eyJpc3MiOiJkaGFuIiwicGFydG5lcklkIjoiIiwiZXhwIjoxNzE2MTg5MjMwLCJ0b2tlbkNvbnN1bWVyVHlwZSI6IlNFTEYiLCJ3ZWJob29rVXJsIjoiIiwiZGhhbkNsaWVudElkIjoiMTAwMDU5NjU0NyJ9.Wp42c-wpubNXESui3xpXjCsgvAfbA_u1nlwS6XEwpuo0lPyUT4scH6Wreu4zT7WMEe79t8C8VEC71m-yjFwjHg"
+client_id = 1101381542
+access_token = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9.eyJpc3MiOiJkaGFuIiwicGFydG5lcklkIjoiIiwiZXhwIjoxNzMwNjMyMzU0LCJ0b2tlbkNvbnN1bWVyVHlwZSI6IlNFTEYiLCJ3ZWJob29rVXJsIjoiIiwiZGhhbkNsaWVudElkIjoiMTEwMTM4MTU0MiJ9.3yrWmHUM5nVVV2mm8PcazNzVUO8EcQ_Cy66FY7S3wFDwUm65WErFTt6ci4aar21AIHLUu3dEokz7PFPIKxruJQ"
 dhan = dhanhq(client_id, access_token)
-trade_start_price = 210
-desired_symbol = "NATGASMINI-26Jul2024-FUT"
+trade_start_price = 93024.0
+desired_symbol = "SILVERMIC-29Nov2024-FUT"
 
 def fetch_data():
     res = dhan.get_positions()
-
+    #print(res)
     for position in res['data']:
         if position['tradingSymbol'] == desired_symbol:
 
@@ -85,10 +86,10 @@ def fetch_data():
                 print(retrieved_data)
 
                 if position['positionType'] == 'SHORT':
-                    next_short_trade_price = trade_start_price - (position['netQty'] * 5)
-                    target_price=next_short_trade_price + (-2 * 5)
-                    print(target_price)
-                    print(next_short_trade_price)
+                    next_short_trade_price = trade_start_price - (position['netQty'] * 2000)
+                    target_price=next_short_trade_price + (-2 * 2000)
+                    print("The next target is " + str(target_price))
+                    print("The next  short price is " + str(next_short_trade_price))
                     if float(last_price) > next_short_trade_price:
                         print('short')
                         # Uncomment and update the following lines to place an order if needed
@@ -123,10 +124,11 @@ def fetch_data():
                            )
 
                 if position['positionType'] == 'LONG':
-                    next_long_trade_price = trade_start_price - (position['netQty'] * 5)
-                    target_price=next_long_trade_price + (2 * 5)
-                    print(target_price)
-                    print(next_long_trade_price)
+                    print("Long Position find")
+                    next_long_trade_price = trade_start_price - (position['netQty'] * 2000)
+                    target_price=next_long_trade_price + (2 * 2000)
+                    print("The next target is " + str(target_price))
+                    print("The next long buy price is " + str(next_long_trade_price))
                     if float(last_price) < next_long_trade_price:
                         print('buy')
                         res = dhan.place_order(
@@ -143,6 +145,22 @@ def fetch_data():
                            trigger_price=0,      
                            )
                         print(res)
+                    
+                    if float(last_price) > target_price :
+                         # Uncomment and update the following lines to place an order if needed
+                        res = dhan.place_order(
+                           tag=sid,
+                           transaction_type=dhan.SELL,
+                           exchange_segment=dhan.MCX,
+                           product_type=dhan.MARGIN,
+                           order_type=dhan.MARKET,
+                           validity='DAY',
+                           security_id=sid,
+                           quantity=1,
+                           disclosed_quantity=0,
+                           price=0,
+                           trigger_price=0,      
+                          )
 
             except requests.exceptions.HTTPError as err:
                 print("HTTP error occurred:", err)
@@ -160,7 +178,7 @@ def fetch_data():
 # Schedule the fetch_data function to run every 30 seconds
 schedule.every(30).seconds.do(fetch_data)
 
-# Keep the script running
+
 while True:
     schedule.run_pending()
     time.sleep(1)
