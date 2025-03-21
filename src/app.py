@@ -1,285 +1,260 @@
-import requests
-import json
-import pandas as pd
-from datetime import datetime
-import schedule
+import base64
+import hmac
+import os
+import struct
 import time
-import logging
-from dhanhq import dhanhq
+from urllib.parse import urlparse, parse_qs
+from fastapi import FastAPI, HTTPException
+import requests
+from fyers_apiv3 import fyersModel
+from fyers_apiv3.FyersWebsocket import data_ws
+app = FastAPI()
+
+# Fyers API Credentials
+client_id = "PQ25J9JSU4-100"
+token_file = "fyers_token.txt"
+totp_key = "DRU5NOPAFF6XJTMI4AL3DYSM3CP74STA"  # totp_key (ex., "OMKRABCDCDVDFGECLWXK6OVB7T4DTKU5")
+username = "XK24776"  # Fyers Client ID (ex., "TK01248")
+pin = 5560  # four-digit PIN
+client_id = "PQ25J9JSU4-100"  # App ID of the created app (ex., "L9NY305RTW-100")
+secret_key = "HAGXAE1PAC"# Secret ID of the created app
+redirect_uri = "https://trade.fyers.in/api-login/redirect-uri/index.html"  # Redircet URL you entered while creating the app (ex., "https://trade.fyers.in/api-login/redirect-uri/index.html")
+
+data12 = {
+    "symbol":"NSE:IDEA-EQ",
+    "qty":1,
+    "type":2,
+    "side":1,
+    "productType":"INTRADAY",
+    "limitPrice":0,
+    "stopPrice":0,
+    "validity":"DAY",
+    "disclosedQty":0,
+    "offlineOrder":False,
+    "orderTag":"tag1"
+}
 
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# Dhan API Credentials
-client_id = 1101381542
-access_token = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9.eyJpc3MiOiJkaGFuIiwicGFydG5lcklkIjoiIiwiZXhwIjoxNzQ0NzkwNzYwLCJ0b2tlbkNvbnN1bWVyVHlwZSI6IlNFTEYiLCJ3ZWJob29rVXJsIjoiaHR0cHM6Ly9hcGkubWFya2V0bWF5YS5jb20vYXBpL29yZGVydXBkYXRlL2RoYW4iLCJkaGFuQ2xpZW50SWQiOiIxMTAxMzgxNTQyIn0.6UubHDZ0MccjB4553qL2aw9Qs5RFDel_Ir8wsqgTLXb8FrnSbyKR0mUIrjj14_gO23MFgHEKScWYi_h9hDwrKA"
-dhan = dhanhq(client_id, access_token)
-
-
-
-def fetch_near_month_expiry():
-    """Fetches the near-month expiry contract for CRUDEOILM from MCX."""
-    url = "https://smart-search.dhan.co/Search/api/Search/Scrip"
-    headers = {"Content-Type": "application/json"}
-    payload = {
-        "UserId": "1101381542",
-        "UserType": "C",
-        "Source": "W",
-        "Data": {
-            "inst": "",
-            "searchterm": "CRUDEOILM",
-            "exch": "MCX",
-            "optionflag": True
-        },
-        "broker_code": "DHN1804"
-    }
-
+def read_file():
     try:
-        response = requests.post(url, headers=headers, json=payload)
-        response.raise_for_status()
-        data = response.json()
-
-        mcx_data = []
-        today = datetime.today()
-        current_month = today.month
-        next_month = (today.month % 12) + 1  # Handle December -> January rollover
-
-        if "data" in data:
-            for item in data["data"]:
-                if item.get("d_exch") == "MCX" and item.get("ExpDate_s"):
-                    try:
-                        expiry_date = datetime.strptime(item["ExpDate_s"], "%Y-%m-%dT%H:%M")
-                        
-                        # Check if expiry belongs to current month first
-                        if expiry_date.month == current_month:
-                            mcx_data.append({
-                                "Security ID": item.get("Sid_s"),
-                                "Trading Symbol": item.get("ExchTradingSymbol_s"),
-                                "Expiry Date": item.get("ExpDate_s"),
-                                "Upper Circuit": item.get("Upper_ckt_d"),
-                                "Lower Circuit": item.get("LoweCkt_d"),
-                                "Lot Size": item.get("LOT_UNITS_s"),
-                                "Volume": item.get("volume_i")
-                            })
-                    except ValueError as e:
-                        logging.warning(f"Skipping invalid date format: {item['ExpDate_s']} - {e}")
-
-        # If no contracts were found for the current month, check the next month
-        if not mcx_data:
-            for item in data["data"]:
-                if item.get("d_exch") == "MCX" and item.get("ExpDate_s"):
-                    try:
-                        expiry_date = datetime.strptime(item["ExpDate_s"], "%Y-%m-%dT%H:%M")
-                        
-                        # If no current month expiry is found, check the next month
-                        if expiry_date.month == next_month:
-                            mcx_data.append({
-                                "Security ID": item.get("Sid_s"),
-                                "Trading Symbol": item.get("ExchTradingSymbol_s"),
-                                "Expiry Date": item.get("ExpDate_s"),
-                                "Upper Circuit": item.get("Upper_ckt_d"),
-                                "Lower Circuit": item.get("LoweCkt_d"),
-                                "Lot Size": item.get("LOT_UNITS_s"),
-                                "Volume": item.get("volume_i")
-                            })
-                    except ValueError as e:
-                        logging.warning(f"Skipping invalid date format: {item['ExpDate_s']} - {e}")
-
-        if mcx_data:
-            df = pd.DataFrame(mcx_data)
-            logging.info("\n📌 **Near-Month Futures Contract**")
-            logging.info(df.to_string(index=False))
-            return df
-        else:
-            logging.warning("No Near-Month MCX data found for both current and next month.")
-            return None
-
-    except requests.exceptions.RequestException as err:
-        logging.error(f"Request Error: {err}")
+        with open("fyers_token.txt", "r") as f:
+            token = f.read().strip()
+        return token
+    except FileNotFoundError:
         return None
 
 
-def fetch_last_price(symbol, security_id):
-    """Fetches the last trading price of the given symbol."""
-    url = "https://scanx.dhan.co/scanx/rtscrdt"
-    payload = {"Data": {"Seg": 5, "Secid": int(security_id)}}
+def write_file(token):
+    with open("fyers_token.txt", "w") as f:
+        f.write(token)
 
-    try:
-        response = requests.post(url, json=payload)
-        response.raise_for_status()
-        data = response.json()
 
-        if "data" in data and "Ltp" in data["data"]:
-            last_price = data["data"]["Ltp"]
-            if last_price is None:
-                logging.warning(f"Error: Last price for {symbol} is None. Skipping this iteration.")
-                return None
+def totp(key, time_step=30, digits=6, digest="sha1"):
+    key = base64.b32decode(key.upper() + "=" * ((8 - len(key)) % 8))
+    counter = struct.pack(">Q", int(time.time() / time_step))
+    mac = hmac.new(key, counter, digest).digest()
+    offset = mac[-1] & 0x0F
+    binary = struct.unpack(">L", mac[offset : offset + 4])[0] & 0x7FFFFFFF
+    return str(binary)[-digits:].zfill(digits)
 
-            logging.info(f"📌 Last Trading Price of {symbol}: ₹{last_price}")
-            return last_price
-        else:
-            logging.error(f"Error: 'Ltp' key missing in API response for {symbol}")
-            return None
 
-    except requests.exceptions.HTTPError as err:
-        logging.error(f"HTTP error occurred: {err}")
-        return None
-
-def fetch_atm_option_data(futures_price):
-    """Fetches the At-the-Money (ATM) option contracts for near-month expiry."""
-    url = "https://smart-search.dhan.co/Search/api/Search/Scrip"
-    headers = {"Content-Type": "application/json"}
-    payload = {
-        "UserId": "1101381542",
-        "UserType": "C",
-        "Source": "W",
-        "Data": {"inst": "", "searchterm": "CRUDEOILM", "exch": "MCX", "optionflag": True},
-        "broker_code": "DHN1804"
+def get_token():
+    headers = {
+        "Accept": "application/json",
+        "Accept-Language": "en-US,en;q=0.9",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Safari/537.36",
     }
 
+    s = requests.Session()
+    s.headers.update(headers)
+
+    data1 = f'{{"fy_id":"{base64.b64encode(f"{username}".encode()).decode()}","app_id":"2"}}'
+    r1 = s.post("https://api-t2.fyers.in/vagator/v2/send_login_otp_v2", data=data1)
+
+    request_key = r1.json()["request_key"]
+    data2 = f'{{"request_key":"{request_key}","otp":{totp(totp_key)}}}'
+    r2 = s.post("https://api-t2.fyers.in/vagator/v2/verify_otp", data=data2)
+    assert r2.status_code == 200, f"Error in r2:\n {r2.text}"
+
+    request_key = r2.json()["request_key"]
+    data3 = f'{{"request_key":"{request_key}","identity_type":"pin","identifier":"{base64.b64encode(f"{pin}".encode()).decode()}"}}'
+    r3 = s.post("https://api-t2.fyers.in/vagator/v2/verify_pin_v2", data=data3)
+    assert r3.status_code == 200, f"Error in r3:\n {r3.json()}"
+
+    headers = {"authorization": f"Bearer {r3.json()['data']['access_token']}", "content-type": "application/json; charset=UTF-8"}
+    data4 = f'{{"fyers_id":"{username}","app_id":"{client_id[:-4]}","redirect_uri":"{redirect_uri}","appType":"100","code_challenge":"","state":"abcdefg","scope":"","nonce":"","response_type":"code","create_cookie":true}}'
+    r4 = s.post("https://api.fyers.in/api/v2/token", headers=headers, data=data4)
+    assert r4.status_code == 308, f"Error in r4:\n {r4.json()}"
+    print(data4)
+    parsed = urlparse(r4.json()["Url"])
+    auth_code = parse_qs(parsed.query)["auth_code"][0]
+
+    session = fyersModel.SessionModel(client_id=client_id, secret_key=secret_key, redirect_uri=redirect_uri, response_type="code", grant_type="authorization_code")
+    session.set_token(auth_code)
+    response = session.generate_token()
+    return response["access_token"]
+
+
+def get_profile(token):
+    fyers = fyersModel.FyersModel(client_id=client_id, token=token, log_path=os.getcwd())
+    return fyers.get_profile()
+
+def get_fund(token):
+    fyers=fyersModel.FyersModel(client_id=client_id, token=token, log_path=os.getcwd())
+    return fyers.funds()
+    
+def get_position(token):
+    fyers=fyersModel.FyersModel(client_id=client_id, token=token, log_path=os.getcwd())
+    return fyers.positions()
+
+def place_order(token):
+    fyers=fyersModel.FyersModel(client_id=client_id, token=token, log_path=os.getcwd())
+    return fyers.place_order(data12)
+
+def main():
+    token = read_file()
+    if token is None:
+        token = get_token()
+        write_file(token)
+        print("Fyers access token is saved in `fyers_token.txt` file.")
+
+    resp = get_profile(token)
+
+    if "error" in resp["s"] or "error" in resp["message"] or "expired" in resp["message"]:
+        token = get_token()
+        resp = get_profile(token)
+    #print(resp)
+
+
+    resp = get_fund(token)
+
+    if "error" in resp["s"] or "error" in resp["message"] or "expired" in resp["message"]:
+        token = get_token()
+        resp = get_fund(token)
+    #print(resp)
+
+    resp = get_position(token)
+
+    if "error" in resp["s"] or "error" in resp["message"] or "expired" in resp["message"]:
+        token = get_token()
+        resp = get_position(token)
+    print(resp)
+
+
+
+
+
+
+def onmessage(message):
+    """
+    Callback function to handle incoming messages from the FyersDataSocket WebSocket.
+
+    Parameters:
+        message (dict): The received message from the WebSocket.
+
+    """
+   # Specify the symbol to check
+    expected_symbol = 'MCX:CRUDEOILM24SEPFUT'
+
+    # Check if the symbol is as expected
+    if message.get('symbol') == expected_symbol:
+    # Iterate through all key-value pairs and print them
+     for key, value in message.items():
+        print(f"{key}: {value}")
+    else:
+        print(f"Data does not pertain to the expected symbol: {expected_symbol}")
+
+
+def onerror(message):
+    """
+    Callback function to handle WebSocket errors.
+
+    Parameters:
+        message (dict): The error message received from the WebSocket.
+
+
+    """
+    print("Error:", message)
+
+
+def onclose(message):
+    """
+    Callback function to handle WebSocket connection close events.
+    """
+    print("Connection closed:", message)
+
+
+def onopen():
+    """
+    Callback function to subscribe to data type and symbols upon WebSocket connection.
+
+    """
+    # Specify the data type and symbols you want to subscribe to
+    data_type = "SymbolUpdate"
+
+    # Subscribe to the specified symbols and data type
+    symbols = ['NSE:ADANIENT-EQ']
+    fyers.subscribe(symbols=symbols, data_type=data_type)
+
+    # Keep the socket running to receive real-time data
+    fyers.keep_running()
+
+
+# Replace the sample access token with your actual access token obtained from Fyers
+access_token  = read_file()
+#print(access_token)              
+# Create a FyersDataSocket instance with the provided parameters
+fyers = data_ws.FyersDataSocket(
+    access_token=access_token,       # Access token in the format "appid:accesstoken"
+    log_path="",                     # Path to save logs. Leave empty to auto-create logs in the current directory.
+    litemode=False,                  # Lite mode disabled. Set to True if you want a lite response.
+    write_to_file=False,              # Save response in a log file instead of printing it.
+    reconnect=True,                  # Enable auto-reconnection to WebSocket on disconnection.
+    on_connect=onopen,               # Callback function to subscribe to data upon connection.
+    on_close=onclose,                # Callback function to handle WebSocket connection close events.
+    on_error=onerror,                # Callback function to handle WebSocket errors.
+    on_message=onmessage             # Callback function to handle incoming messages from the WebSocket.
+)
+
+
+def read_token():
+    """Reads the Fyers access token from a file."""
     try:
-        response = requests.post(url, headers=headers, json=payload)
-        response.raise_for_status()
-        data = response.json()
+        with open(token_file, "r") as f:
+            return f.read().strip()
+    except FileNotFoundError:
+        raise HTTPException(status_code=401, detail="Fyers access token not found. Please authenticate.")
 
-        if "data" in data:
-            options = []
-            
-            for item in data["data"]:
-                trading_symbol = item.get("ExchTradingSymbol_s", "")
 
-                if "Strike_d" in item and trading_symbol.endswith(("-CE", "-PE")):
-                    try:
-                        strike_price = float(item["Strike_d"])
-                        options.append((strike_price, trading_symbol, item))
-                    except ValueError:
-                        logging.warning(f"Skipping invalid strike price: {item['Strike_d']} for {trading_symbol}")
+@app.get("/quotes/{exchange}/{symbol}")
+def get_stock_quote(exchange: str, symbol: str):
+    """
+    Fetches live stock/commodity/currency data from Fyers API.
 
-            if not options:
-                logging.warning("⚠ No valid options data found.")
-                return None, None
+    Supported:
+    - NSE, BSE, MCX for Stocks, Futures, Options
+    - Currency Pairs (USDINR, GBPINR, etc.)
 
-            atm_strike, _, atm_option = min(options, key=lambda x: abs(x[0] - futures_price))
+    Example:
+    - /quotes/NSE/SBIN-EQ
+    - /quotes/BSE/SBIN-A
+    - /quotes/NSE/NIFTY20OCTFUT
+    - /quotes/NSE/USDINR20OCTFUT
+    - /quotes/MCX/CRUDEOIL20OCTFUT
+    """
+    token = read_token()
+    fyers = fyersModel.FyersModel(client_id=client_id, token=token, log_path=os.getcwd())
 
-            call_option, put_option = None, None
-            for strike_price, trading_symbol, option in options:
-                if strike_price == atm_strike:
-                    if trading_symbol.endswith("-CE"):
-                        call_option = option
-                    elif trading_symbol.endswith("-PE"):     
-                        put_option = option
+    data = {"symbols": f"{exchange}:{symbol}"}
+    response = fyers.quotes(data=data)
 
-            logging.info("\n📌 **Near-Month ATM Option Contracts**")
-            logging.info(f"ATM Strike Price: ₹{atm_strike}")
-            if call_option:
-                logging.info(f"Call Option: {call_option['Ticker_t']} (Security ID: {call_option['Sid_s']})")
-            if put_option:
-                logging.info(f"Put Option: {put_option['Ticker_t']} (Security ID: {put_option['Sid_s']})")
-                
-            return call_option, put_option
+    if response.get("s") == "error":
+        raise HTTPException(status_code=400, detail=response.get("message", "Error fetching stock data"))
 
-    except requests.exceptions.RequestException as err:
-        logging.error(f"Request Error: {err}")
-        return None, None
+    return response
 
-def fetch_data(desired_symbol, seq_id,last_price):
-    """Fetch positions and place a sell order only if the desired symbol is not found in positions."""
-    res = dhan.get_positions()
-
-    if not res or 'data' not in res:
-        logging.error("Error: Invalid or empty response from get_positions().")
-        return
-
-    logging.info(f"Desired Symbol: {desired_symbol}")
-    logging.info(f"Security ID (seq_id): {seq_id}")
-
-    symbol_found = False
-
-    if res['data']:  # Check if positions data is not empty
-        for position in res['data']:
-            trading_symbol = position.get('tradingSymbol')
-            if trading_symbol is None:
-                logging.warning(f"Warning: 'tradingSymbol' key missing in position: {position}")
-                continue
-
-            if trading_symbol == desired_symbol:
-                symbol_found = True
-                logging.info(f"Symbol '{desired_symbol}' found in positions. No order will be placed.")
-                 # Place new orders only if they do not exist
-                if position['positionType'] == 'SHORT':
-                    
-                    target_price = last_price - 50  # Fixed calculation
-                    logging.info(f"Symbol '{desired_symbol}'target_price price is {target_price}")
-                    # Fetch existing forever orders
-                    existing_forever_orders = dhan.get_forever().get('data', [])
-
-                    target_order_exists = any(
-                      order['tradingSymbol'] == desired_symbol and order['price'] == target_price
-                      for order in existing_forever_orders
-                    )
-                    if not target_order_exists:
-                        print("Placing opposite BUY target order...")
-                        buy_target_order = dhan.place_forever(
-                            security_id=seq_id,
-                            exchange_segment=dhan.MCX,
-                            transaction_type=dhan.BUY,
-                            product_type=dhan.MARGIN,
-                            order_type=dhan.LIMIT,
-                            quantity=1,
-                            price=target_price,
-                            trigger_Price=target_price
-                        )
-                        logging.info(buy_target_order)
-                    else:
-                        logging.info("BUY target order already exists.")
-                    
-                break  # Exit the loop if the symbol is found
-
-    # Place the SELL order only if the symbol is not found in positions
-    if not symbol_found:
-        logging.info(f"Symbol '{desired_symbol}' not found in positions. Placing SELL order.")
-
-        try:
-            sell_order = dhan.place_order(
-                security_id=seq_id,
-                exchange_segment=dhan.MCX,
-                transaction_type=dhan.SELL,
-                product_type=dhan.MARGIN,
-                order_type=dhan.MARKET,
-                quantity=1,
-                price=0
-            )
-            logging.info(f"Sell Order Response: {sell_order}")
-        except Exception as e:
-            logging.error(f"Error placing SELL order: {e}")
-
-# **Schedule Function**
-def scheduled_task():
-    """Fetches near-expiry futures and options, then gets their last traded prices."""
-    df = fetch_near_month_expiry()
-    if df is not None and not df.empty:
-        symbol = df.iloc[0]["Trading Symbol"]  # **Take the first near expiry symbol**
-        security_id = df.iloc[0]["Security ID"]  # **Take the corresponding Security ID**
-        futures_price = fetch_last_price(symbol, security_id)
-
-        if futures_price:
-            call_option, put_option = fetch_atm_option_data(futures_price)
-
-            if call_option:
-                last_price = fetch_last_price(call_option["Ticker_t"], call_option["Sid_s"])
-                logging.info(last_price)
-                if last_price > 200:
-                    fetch_data(call_option['Ticker_t'], call_option['Sid_s'],last_price)
-            if put_option:
-                last_price = fetch_last_price(put_option["Ticker_t"], put_option["Sid_s"])
-                logging.info(last_price)
-                if last_price > 200:
-                    fetch_data(put_option['Ticker_t'], put_option['Sid_s'],last_price)
-
-# **Run the function every 30 seconds**
-schedule.every(30).seconds.do(scheduled_task)
-
-while True:
-    schedule.run_pending()
-    time.sleep(1)
+if __name__ == "__main__":
+    main()
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
