@@ -250,7 +250,11 @@ def get_stock_quote(exchange: str, symbol: str):
     response = fyers.quotes(data=data)
 
     if response.get("s") == "error":
+        token = get_token()
+        resp = get_profile(token)
+        print(resp)
         raise HTTPException(status_code=400, detail=response.get("message", "Error fetching stock data"))
+        
 
     return response
 
